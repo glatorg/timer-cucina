@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timer da cucina — prove su iPhone</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 17px/1.4 -apple-system, system-ui, sans-serif; margin: 0; padding: 16px; max-width: 640px; margin-inline: auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 18px; margin: 0 0 6px; }
+  p { margin: 6px 0; }
+  section { border: 1px solid #8884; border-radius: 12px; padding: 12px; margin: 14px 0; }
+  button { font: inherit; padding: 12px 14px; border-radius: 10px; border: 1px solid #8886; background: #2563eb; color: #fff; margin: 4px 4px 4px 0; }
+  button.sec { background: transparent; color: inherit; }
+  button.stop { background: #b91c1c; }
+  .st { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .ok { color: #15803d; } .ko { color: #b91c1c; }
+  pre { white-space: pre-wrap; word-break: break-word; font-size: 13px; background: #8881; padding: 10px; border-radius: 8px; max-height: 320px; overflow: auto; }
+  small { opacity: .7; }
+</style>
+</head>
+<body>
+<h1>Prove su iPhone — step 1</h1>
+<p><small>Sei prove (P1–P6) del TRD. Esegui ogni prova, poi premi «Copia risultati» in fondo e incolla il testo nella chat.</small></p>
+
+<section>
+  <h2>Ambiente</h2>
+  <p id="env"></p>
+</section>
+
+<section>
+  <h2>P1 — Suono e voce dopo una lunga attesa</h2>
+  <p>Premi, appoggia il telefono e non toccarlo. Alla fine l'app deve suonare e dire «Pasta pronta».</p>
+  <button onclick="p1(20)">Avvia 20 minuti</button>
+  <button class="sec" onclick="p1(1)">Prova rapida 1 minuto</button>
+  <button class="stop" onclick="p1stop()">Ferma</button>
+  <p class="st" id="p1st">Fermo.</p>
+</section>
+
+<section>
+  <h2>P2 — Schermo sempre acceso</h2>
+  <p>Premi e non toccare il telefono per 3 minuti. Lo schermo deve restare acceso. Ripeti la prova dalla schermata Home (Condividi → Aggiungi a Home).</p>
+  <button onclick="p2on()">Tieni acceso</button>
+  <button class="stop" onclick="p2off()">Rilascia</button>
+  <p class="st" id="p2st">Non attivo.</p>
+</section>
+
+<section>
+  <h2>P3 / P5 — Una frase con il microfono</h2>
+  <p>Premi e di' «pasta dieci minuti». Prova in silenzio, poi con cappa accesa. P5: ripeti in Chrome e in Brave.</p>
+  <button onclick="p3('it-IT')">Ascolta (italiano)</button>
+  <button class="sec" onclick="p3('en-US')">Ascolta (inglese)</button>
+  <p class="st" id="p3st">Fermo.</p>
+</section>
+
+<section>
+  <h2>P4 — Ascolto continuo per 30 minuti</h2>
+  <p>Premi e lascia il telefono in cucina. Ogni tanto di' «metti un timer pasta dieci minuti». Parla anche d'altro.</p>
+  <button onclick="p4start()">Avvia ascolto continuo</button>
+  <button class="stop" onclick="p4stop()">Ferma</button>
+  <p class="st" id="p4st">Fermo.</p>
+</section>
+
+<section>
+  <h2>P6 — Comando mentre l'allarme suona</h2>
+  <p>Premi. L'allarme suona per 15 secondi. Mentre suona di' «uova sette minuti».</p>
+  <button onclick="p6()">Avvia</button>
+  <p class="st" id="p6st">Fermo.</p>
+</section>
+
+<section>
+  <h2>Risultati</h2>
+  <button onclick="copyLog()">Copia risultati</button>
+  <button class="sec" onclick="clearLog()">Cancella</button>
+  <pre id="log"></pre>
+</section>
+
+<script>
+const $ = id => document.getElementById(id);
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const LOG_KEY = 'prova-log';
+let lines = [];
+try { lines = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch (e) {}
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString('it-IT');
+  lines.push(t + '  ' + msg);
+  try { localStorage.setItem(LOG_KEY, JSON.stringify(lines)); } catch (e) {}
+  render();
+}
+function render() { $('log').textContent = lines.join('\n'); $('log').scrollTop = 1e9; }
+function clearLog() { lines = []; try { localStorage.removeItem(LOG_KEY); } catch (e) {} render(); }
+async function copyLog() {
+  const text = $('env').textContent + '\n' + lines.join('\n');
+  try { await navigator.clipboard.writeText(text); log('Risultati copiati.'); }
+  catch (e) { log('Copia non riuscita: seleziona il testo a mano.'); }
+}
+function mmss(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+
+// ---------- Ambiente ----------
+const standalone = window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+$('env').textContent =
+  'Riconoscimento vocale: ' + (SR ? 'presente' : 'ASSENTE') +
+  ' · Voce sintetica: ' + ('speechSynthesis' in window ? 'presente' : 'ASSENTE') +
+  ' · Wake lock: ' + ('wakeLock' in navigator ? 'presente' : 'ASSENTE') +
+  ' · Da Home: ' + (standalone ? 'sì' : 'no') +
+  ' · ' + navigator.userAgent;
+render();
+
+// ---------- Audio e voce ----------
+let ctx = null;
+function unlockAudio() {
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state !== 'running') ctx.resume();
+  if ('speechSynthesis' in window) {
+    const u = new SpeechSynthesisUtterance(' ');
+    u.volume = 0;
+    speechSynthesis.speak(u);
+  }
+}
+function beep(times = 3) {
+  if (!ctx) return 'nessun contesto audio';
+  const now = ctx.currentTime;
+  for (let i = 0; i < times; i++) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'square'; o.frequency.value = 880;
+    g.gain.setValueAtTime(0.0001, now + i * 0.4);
+    g.gain.exponentialRampToValueAtTime(0.4, now + i * 0.4 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.4 + 0.3);
+    o.connect(g).connect(ctx.destination);
+    o.start(now + i * 0.4); o.stop(now + i * 0.4 + 0.32);
+  }
+  return ctx.state;
+}
+function say(text, lang = 'it-IT') {
+  return new Promise(resolve => {
+    if (!('speechSynthesis' in window)) return resolve('assente');
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = lang;
+    let done = false;
+    const fin = r => { if (!done) { done = true; resolve(r); } };
+    u.onend = () => fin('detta');
+    u.onerror = e => fin('errore ' + (e.error || ''));
+    setTimeout(() => fin('nessuna risposta in 8 s'), 8000);
+    speechSynthesis.speak(u);
+  });
+}
+
+// ---------- Wake lock ----------
+let lock = null, lockWanted = false, lockT0 = 0, lockTick = null;
+async function acquireLock(tag) {
+  if (!('wakeLock' in navigator)) { log(tag + ': wake lock ASSENTE'); return false; }
+  try {
+    lock = await navigator.wakeLock.request('screen');
+    lock.addEventListener('release', () => log(tag + ': wake lock rilasciato dal browser'));
+    log(tag + ': wake lock ottenuto');
+    return true;
+  } catch (e) { log(tag + ': wake lock rifiutato — ' + e.name + ' ' + e.message); return false; }
+}
+document.addEventListener('visibilitychange', () => {
+  log('Pagina ' + (document.visibilityState === 'visible' ? 'visibile' : 'nascosta'));
+  if (document.visibilityState === 'visible' && lockWanted) acquireLock('Ritorno');
+});
+
+// ---------- P1 ----------
+let p1End = 0, p1Timer = null;
+async function p1(min) {
+  p1stop(true);
+  unlockAudio();
+  lockWanted = true; await acquireLock('P1');
+  p1End = Date.now() + min * 60000;
+  log('P1 avviata: ' + min + ' min');
+  p1Timer = setInterval(async () => {
+    const left = p1End - Date.now();
+    $('p1st').textContent = 'Mancano ' + mmss(left);
+    if (left <= 0) {
+      clearInterval(p1Timer); p1Timer = null;
+      const late = Date.now() - p1End;
+      const a = beep(3);
+      const v = await say('Pasta pronta');
+      log('P1 fine. Ritardo ' + late + ' ms · audio: ' + a + ' · voce: ' + v);
+      $('p1st').textContent = 'Finita. Hai sentito suono e voce? Scrivilo nella chat.';
+    }
+  }, 500);
+}
+function p1stop(silent) {
+  if (p1Timer) { clearInterval(p1Timer); p1Timer = null; if (!silent) log('P1 fermata a mano'); }
+  $('p1st').textContent = 'Fermo.';
+}
+
+// ---------- P2 ----------
+async function p2on() {
+  lockWanted = true;
+  const ok = await acquireLock('P2');
+  lockT0 = Date.now();
+  clearInterval(lockTick);
+  lockTick = setInterval(() => {
+    $('p2st').textContent = (ok ? 'Attivo da ' : 'NON attivo — tempo ') + mmss(Date.now() - lockT0);
+  }, 1000);
+}
+async function p2off() {
+  lockWanted = false; clearInterval(lockTick);
+  if (lock) { try { await lock.release(); } catch (e) {} lock = null; }
+  log('P2 rilasciata dopo ' + mmss(Date.now() - lockT0));
+  $('p2st').textContent = 'Non attivo.';
+}
+
+// ---------- P3 / P5 ----------
+function p3(lang) {
+  if (!SR) { log('P3: riconoscimento vocale ASSENTE in questo browser'); $('p3st').textContent = 'Assente.'; return; }
+  const r = new SR();
+  r.lang = lang; r.interimResults = false; r.maxAlternatives = 1;
+  let got = false;
+  const t0 = Date.now();
+  r.onstart = () => { $('p3st').textContent = 'Ascolto… parla ora.'; };
+  r.onresult = e => {
+    got = true;
+    const res = e.results[e.results.length - 1][0];
+    log('P3 [' + lang + '] sentito: «' + res.transcript + '» (fiducia ' + (res.confidence || 0).toFixed(2) + ', ' + (Date.now() - t0) + ' ms)');
+    $('p3st').textContent = 'Sentito: «' + res.transcript + '»';
+  };
+  r.onerror = e => { log('P3 [' + lang + '] errore: ' + e.error); $('p3st').textContent = 'Errore: ' + e.error; };
+  r.onend = () => { if (!got) { log('P3 [' + lang + '] finita senza testo'); if ($('p3st').textContent.startsWith('Ascolto')) $('p3st').textContent = 'Nessun testo.'; } };
+  try { r.start(); } catch (e) { log('P3 start fallito: ' + e.message); }
+}
+
+// ---------- P4 ----------
+let p4 = null;
+function p4start() {
+  if (!SR) { log('P4: riconoscimento vocale ASSENTE'); $('p4st').textContent = 'Assente.'; return; }
+  p4stop(true);
+  unlockAudio();
+  lockWanted = true; acquireLock('P4');
+  p4 = { on: true, t0: Date.now(), restarts: 0, errors: 0, heard: 0, hits: 0, rec: null, tick: null };
+  log('P4 avviata');
+  const boot = () => {
+    if (!p4 || !p4.on) return;
+    const r = new SR();
+    p4.rec = r;
+    r.lang = 'it-IT'; r.continuous = true; r.interimResults = false;
+    r.onresult = e => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (!e.results[i].isFinal) continue;
+        const txt = e.results[i][0].transcript.trim();
+        p4.heard++;
+        const hit = /^metti un timer\b/i.test(txt);
+        if (hit) p4.hits++;
+        log('P4 ' + mmss(Date.now() - p4.t0) + (hit ? ' ✔ COMANDO: «' : ' · ignorato: «') + txt + '»');
+      }
+    };
+    r.onerror = e => { p4.errors++; log('P4 ' + mmss(Date.now() - p4.t0) + ' errore: ' + e.error); };
+    r.onend = () => {
+      if (!p4 || !p4.on) return;
+      p4.restarts++;
+      setTimeout(boot, 300);
+    };
+    try { r.start(); } catch (e) { log('P4 start fallito: ' + e.message); setTimeout(boot, 1000); }
+  };
+  boot();
+  p4.tick = setInterval(() => {
+    $('p4st').textContent = 'In ascolto da ' + mmss(Date.now() - p4.t0) + ' · riavvii ' + p4.restarts +
+      ' · errori ' + p4.errors + ' · frasi ' + p4.heard + ' · comandi ' + p4.hits;
+  }, 1000);
+}
+function p4stop(silent) {
+  if (!p4) return;
+  p4.on = false; clearInterval(p4.tick);
+  try { p4.rec && p4.rec.abort(); } catch (e) {}
+  if (!silent) log('P4 fermata dopo ' + mmss(Date.now() - p4.t0) + ' · riavvii ' + p4.restarts +
+    ' · errori ' + p4.errors + ' · frasi ' + p4.heard + ' · comandi ' + p4.hits);
+  p4 = null;
+  $('p4st').textContent = 'Fermo.';
+}
+
+// ---------- P6 ----------
+function p6() {
+  if (!SR) { log('P6: riconoscimento vocale ASSENTE'); $('p6st').textContent = 'Assente.'; return; }
+  unlockAudio();
+  let n = 0, got = false;
+  const alarm = setInterval(() => { beep(2); if (++n >= 15) clearInterval(alarm); }, 1000);
+  const r = new SR();
+  r.lang = 'it-IT'; r.interimResults = false;
+  r.onstart = () => { $('p6st').textContent = 'Allarme attivo. Parla ora.'; };
+  r.onresult = e => {
+    got = true;
+    const txt = e.results[e.results.length - 1][0].transcript;
+    log('P6 sentito con allarme: «' + txt + '»');
+    $('p6st').textContent = 'Sentito: «' + txt + '»';
+  };
+  r.onerror = e => { log('P6 errore: ' + e.error); $('p6st').textContent = 'Errore: ' + e.error; };
+  r.onend = () => { if (!got) log('P6 finita senza testo'); };
+  log('P6 avviata');
+  try { r.start(); } catch (e) { log('P6 start fallito: ' + e.message); }
+}
+</script>
+</body>
+</html>
