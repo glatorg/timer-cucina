@@ -22,7 +22,7 @@
 </head>
 <body>
 <h1>Prove su iPhone — step 1</h1>
-<p><small>Sei prove (P1–P6) del TRD. Esegui ogni prova, poi premi «Copia risultati» in fondo e incolla il testo nella chat.</small></p>
+<p><small>Sei prove (P1–P6) del TRD. Una prova alla volta: una nuova prova ferma quella in corso. Esegui ogni prova, poi premi «Copia risultati» in fondo e incolla il testo nella chat.</small></p>
 
 <section>
   <h2>Ambiente</h2>
@@ -166,10 +166,19 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && lockWanted) acquireLock('Ritorno');
 });
 
+// ---------- Una prova alla volta ----------
+let single = null, alarmInt = null;
+function stopAll() {
+  p1stop(true);
+  p4stop(true);
+  if (single) { try { single.abort(); } catch (e) {} single = null; }
+  if (alarmInt) { clearInterval(alarmInt); alarmInt = null; }
+}
+
 // ---------- P1 ----------
 let p1End = 0, p1Timer = null;
 async function p1(min) {
-  p1stop(true);
+  stopAll();
   unlockAudio();
   lockWanted = true; await acquireLock('P1');
   p1End = Date.now() + min * 60000;
@@ -212,7 +221,9 @@ async function p2off() {
 // ---------- P3 / P5 ----------
 function p3(lang) {
   if (!SR) { log('P3: riconoscimento vocale ASSENTE in questo browser'); $('p3st').textContent = 'Assente.'; return; }
+  stopAll();
   const r = new SR();
+  single = r;
   r.lang = lang; r.interimResults = false; r.maxAlternatives = 1;
   let got = false;
   const t0 = Date.now();
@@ -232,14 +243,15 @@ function p3(lang) {
 let p4 = null;
 function p4start() {
   if (!SR) { log('P4: riconoscimento vocale ASSENTE'); $('p4st').textContent = 'Assente.'; return; }
-  p4stop(true);
+  stopAll();
   unlockAudio();
   lockWanted = true; acquireLock('P4');
-  p4 = { on: true, t0: Date.now(), restarts: 0, errors: 0, heard: 0, hits: 0, rec: null, tick: null };
+  p4 = { on: true, t0: Date.now(), restarts: 0, errors: 0, heard: 0, hits: 0, fails: 0, rec: null, tick: null };
   log('P4 avviata');
   const boot = () => {
     if (!p4 || !p4.on) return;
     const r = new SR();
+    const startedAt = Date.now();
     p4.rec = r;
     r.lang = 'it-IT'; r.continuous = true; r.interimResults = false;
     r.onresult = e => {
@@ -247,7 +259,7 @@ function p4start() {
         if (!e.results[i].isFinal) continue;
         const txt = e.results[i][0].transcript.trim();
         p4.heard++;
-        const hit = /^metti un timer\b/i.test(txt);
+        const hit = /^metti (un )?timer\b/i.test(txt);
         if (hit) p4.hits++;
         log('P4 ' + mmss(Date.now() - p4.t0) + (hit ? ' ✔ COMANDO: «' : ' · ignorato: «') + txt + '»');
       }
@@ -255,8 +267,15 @@ function p4start() {
     r.onerror = e => { p4.errors++; log('P4 ' + mmss(Date.now() - p4.t0) + ' errore: ' + e.error); };
     r.onend = () => {
       if (!p4 || !p4.on) return;
+      const short = Date.now() - startedAt < 1500;
+      p4.fails = short ? p4.fails + 1 : 0;
+      if (p4.fails >= 5) {
+        log('P4: 5 riavvii falliti di fila. Ascolto continuo interrotto.');
+        p4stop();
+        return;
+      }
       p4.restarts++;
-      setTimeout(boot, 300);
+      setTimeout(boot, short ? Math.min(10000, 500 * 2 ** p4.fails) : 300);
     };
     try { r.start(); } catch (e) { log('P4 start fallito: ' + e.message); setTimeout(boot, 1000); }
   };
@@ -279,10 +298,12 @@ function p4stop(silent) {
 // ---------- P6 ----------
 function p6() {
   if (!SR) { log('P6: riconoscimento vocale ASSENTE'); $('p6st').textContent = 'Assente.'; return; }
+  stopAll();
   unlockAudio();
   let n = 0, got = false;
-  const alarm = setInterval(() => { beep(2); if (++n >= 15) clearInterval(alarm); }, 1000);
+  alarmInt = setInterval(() => { beep(2); if (++n >= 15) { clearInterval(alarmInt); alarmInt = null; } }, 1000);
   const r = new SR();
+  single = r;
   r.lang = 'it-IT'; r.interimResults = false;
   r.onstart = () => { $('p6st').textContent = 'Allarme attivo. Parla ora.'; };
   r.onresult = e => {
